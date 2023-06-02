@@ -47,29 +47,29 @@ if "save_dir" not in config:
 if not os.path.isabs(config["save_dir"]):
     config["save_dir"] = os.path.join(root_path, "results", config["save_dir"])
 
-config["batch_size"] = 1
-config["val_batch_size"] = 1
+config["batch_size"] = 2
+config["val_batch_size"] = 2
 config["workers"] = 0
 config["val_workers"] = 0#config["workers"]
 
-
+rootdata = '/home/nio/Documents/mydata'
 """Dataset"""
 # Raw Dataset
 config["train_split"] = os.path.join(
-    root_path, "dataset/train/data"
+    rootdata, "dataset/train/data"
 )
-config["val_split"] = os.path.join(root_path, "dataset/val/data")
-config["test_split"] = os.path.join(root_path, "dataset/test_obs/data")
+config["val_split"] = os.path.join(rootdata, "dataset/val/data")
+config["test_split"] = os.path.join(rootdata, "dataset/test_obs/data")
 
 # Preprocessed Dataset
 config["preprocess"] = False#True # whether use preprocess or not
 config["preprocess_train"] = os.path.join(
-    root_path, "dataset","preprocess", "train_crs_dist6_angle90.p"
+    rootdata, "dataset","preprocess", "train_crs_dist6_angle90.p"
 )
 config["preprocess_val"] = os.path.join(
-    root_path,"dataset", "preprocess", "val_crs_dist6_angle90.p"
+    rootdata,"dataset", "preprocess", "val_crs_dist6_angle90.p"
 )
-config['preprocess_test'] = os.path.join(root_path, "dataset",'preprocess', 'test_test.p')
+config['preprocess_test'] = os.path.join(rootdata, "dataset",'preprocess', 'test_test.p')
 
 """Model"""
 config["rot_aug"] = False
@@ -129,7 +129,8 @@ class Net(nn.Module):
         actors, actor_idcs = actor_gather(gpu(data["feats"]))
         actor_ctrs = gpu(data["ctrs"])
         actors = self.actor_net(actors)
-        # print(actor_ctrs[0].shape)
+        # print(actors.shape)
+        # print(actor_ctrs.shape)
         # print(data["feats"][0].shape)
 
         # construct map features
@@ -143,18 +144,11 @@ class Net(nn.Module):
         # actor-map fusion cycle 
         nodes = self.a2m(nodes, graph, actors, actor_idcs, actor_ctrs)
         # print(nodes.shape)
-        nodes = self.m2m(nodes, graph)
+        #nodes = self.m2m(nodes, graph)
         # print(nodes.shape)
-        actors = self.m2a(actors, actor_idcs, actor_ctrs, nodes, node_idcs, node_ctrs)
+        #actors = self.m2a(actors, actor_idcs, actor_ctrs, nodes, node_idcs, node_ctrs)
         # print(actors.shape)
         actors = self.a2a(actors, actor_idcs, actor_ctrs)
-        # print(actors.shape)
-        # print(len(actor_idcs))
-        # print(len(actor_ctrs))
-        # print(actor_idcs[0])
-        # print(actor_idcs[1])
-        # print(actor_ctrs[0])
-        # print(actor_ctrs[1].shape)
 
         # prediction
         out = self.pred_net(actors, actor_idcs, actor_ctrs)
@@ -185,6 +179,7 @@ def actor_gather(actors: List[Tensor]) -> Tuple[Tensor, List[Tensor]]:
         idcs = torch.arange(count, count + num_actors[i]).to(actors.device)
         actor_idcs.append(idcs)
         count += num_actors[i]
+
     return actors, actor_idcs
 
 
@@ -204,6 +199,7 @@ def graph_gather(graphs):
     graph = dict()
     graph["idcs"] = node_idcs
     graph["ctrs"] = [x["ctrs"] for x in graphs]
+
     # print(graphs[0].keys())
 
     for key in ["feats", "turn", "control", "intersect"]:
@@ -227,7 +223,12 @@ def graph_gather(graphs):
                 for x in temp
             ]
             graph[k1][k2] = torch.cat(temp)
-            
+    
+    # print(len(graph['pre'][0]))
+    # print(graph['pre'][0]['u'].shape)
+    # print(graph['pre'][0]['v'].shape)
+    # print(graph['pre'][1]['u'].shape)
+    # print(graph['pre'][1]['v'].shape)
     return graph
 
 
@@ -270,13 +271,15 @@ class ActorNet(nn.Module):
 
     def forward(self, actors: Tensor) -> Tensor:
         out = actors
-
+   
         outputs = []
         for i in range(len(self.groups)):
             out = self.groups[i](out)
             outputs.append(out)
+        
 
         out = self.lateral[-1](outputs[-1])
+
         for i in range(len(outputs) - 2, -1, -1):
             out = F.interpolate(out, scale_factor=2, mode="linear", align_corners=False)
             out += self.lateral[i](outputs[i])
@@ -315,6 +318,16 @@ class MapNet(nn.Module):
         fuse = dict()
         for key in keys:
             fuse[key] = []
+        # print(keys)
+        '''
+        The input channels are separated into num_groups groups, 
+        each containing num_channels / num_groups channels. 
+        num_channels must be divisible by num_groups. 
+        The mean and standard-deviation are calculated separately over the each group. 
+        γγ and ββ are learnable per-channel affine transform parameter vectors of size num_channels 
+        if affine is True. The standard-deviation is calculated via the biased estimator, 
+        equivalent to torch.var(input, unbiased=False).
+        '''
 
         for i in range(4):
             for key in fuse:
@@ -347,9 +360,17 @@ class MapNet(nn.Module):
         feat = self.input(ctrs)
         feat += self.seg(graph["feats"])
         feat = self.relu(feat)
+        '''
+        Accumulate the elements of alpha times source into the self tensor 
+        by adding to the indices in the order given in index. 
+        For example, if dim == 0, index[i] == j, and alpha=-1, then the ith row of source is subtracted from the jth row of self.
 
+        The dimth dimension of source must have the same size as the length of index (which must be a vector), 
+        and all other dimensions must match self, or an error will be raised.
+        '''
         """fuse map"""
         res = feat
+        # print(len(self.fuse['ctr']))
         for i in range(len(self.fuse["ctr"])):
             temp = self.fuse["ctr"][i](feat)
             for key in self.fuse:
@@ -375,6 +396,8 @@ class MapNet(nn.Module):
                     self.fuse["right"][i](feat[graph["right"]["v"]]),
                 )
 
+            # print(temp.shape)
+            
             feat = self.fuse["norm"][i](temp)
             feat = self.relu(feat)
 
@@ -382,6 +405,10 @@ class MapNet(nn.Module):
             feat += res
             feat = self.relu(feat)
             res = feat
+        # exit()
+
+        # print(graph["feats"][0])
+        # exit(0)
         return feat, graph["idcs"], graph["ctrs"]
 
 
@@ -426,6 +453,7 @@ class A2M(nn.Module):
                 actor_ctrs,
                 self.config["actor2map_dist"],
             )
+
         return feat
 
 
@@ -704,8 +732,9 @@ class Att(nn.Module):
             dist = agt_ctrs[i].view(-1, 1, 2) - ctx_ctrs[i].view(1, -1, 2)
             dist = torch.sqrt((dist ** 2).sum(2))
             mask = dist <= dist_th
-
+            
             idcs = torch.nonzero(mask, as_tuple=False)
+            #torch.nonzero(..., as_tuple=False) (default) returns a 2-D tensor where each row is the index for a nonzero value.
             if len(idcs) == 0:
                 continue
 
@@ -713,16 +742,25 @@ class Att(nn.Module):
             wi.append(idcs[:, 1] + wi_count)
             hi_count += len(agt_idcs[i])
             wi_count += len(ctx_idcs[i])
+
         hi = torch.cat(hi, 0)
         wi = torch.cat(wi, 0)
+        
+
+
+        
 
         agt_ctrs = torch.cat(agt_ctrs, 0)
         ctx_ctrs = torch.cat(ctx_ctrs, 0)
+       
+        
         dist = agt_ctrs[hi] - ctx_ctrs[wi]
+  
         dist = self.dist(dist)
 
-        query = self.query(agts[hi])
 
+        query = self.query(agts[hi])
+        
         ctx = ctx[wi]
         ctx = torch.cat((dist, query, ctx), 1)
         ctx = self.ctx(ctx)
@@ -809,7 +847,11 @@ class PredLoss(nn.Module):
         last_idcs = last_idcs[mask]
         row_idcs = torch.arange(len(last_idcs)).long().to(last_idcs.device)
         dist = []
+        # print(last_idcs)
+        # print(row_idcs.shape)
         for j in range(num_mods):
+            # print(reg[row_idcs, j, last_idcs].shape)
+            # print(gt_preds[row_idcs, last_idcs].shape)
             dist.append(
                 torch.sqrt(
                     (
@@ -820,6 +862,7 @@ class PredLoss(nn.Module):
             )
         
         dist = torch.cat([x.unsqueeze(1) for x in dist], 1)
+        # print(dist.shape)
         min_dist, min_idcs = dist.min(1)
         row_idcs = torch.arange(len(min_idcs)).long().to(min_idcs.device)
 
@@ -839,13 +882,12 @@ class PredLoss(nn.Module):
 
         reg = reg[row_idcs, min_idcs]
         coef = self.config["reg_coef"]
-        print(reg[0].shape)
-        print(gt_preds[0].shape)
+        # print(reg[0].shape)
+        # print(gt_preds[0].shape)
         loss_out["reg_loss"] += coef * self.reg_loss(
             reg[has_preds], gt_preds[has_preds]
         )
         loss_out["num_reg"] += has_preds.sum().item()
-        exit(0)
         return loss_out
 
 
@@ -923,7 +965,6 @@ class PostProcess(nn.Module):
             "loss %2.4f %2.4f %2.4f, ade1 %2.4f, fde1 %2.4f, ade %2.4f, fde %2.4f"
             % (loss, cls, reg, ade1, fde1, ade, fde)
         )
-        print()
 
 
 def pred_metrics(preds, gt_preds, has_preds):
@@ -955,7 +996,5 @@ def get_model():
 
     params = net.parameters()
     opt = Optimizer(params, config)
-
-
 
     return config, ArgoDataset, collate_fn, net, loss, post_process, opt

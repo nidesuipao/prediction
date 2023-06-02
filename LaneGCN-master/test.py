@@ -46,7 +46,7 @@ parser.add_argument(
     "--split", type=str, default="val", help='data split, "val" or "test"'
 )
 parser.add_argument(
-    "--weight", default="/home/nio/Documents/LaneGCN-master/results/lanegcn/30.pt", type=str, metavar="WEIGHT", help="checkpoint path"
+    "--weight", default="/home/nio/Documents/prediction/LaneGCN-master/results/lanegcn/30.pt", type=str, metavar="WEIGHT", help="checkpoint path"
 )
 
 

@@ -1,6 +1,5 @@
 # Copyright (c) 2020 Uber Technologies, Inc.
 # Please check LICENSE for more detail
-
 import numpy as np
 import sys
 import cv2

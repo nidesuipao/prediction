@@ -215,6 +215,7 @@ class ArgoDataset(Dataset):
             feats.append(feat)
             gt_preds.append(gt_pred)
             has_preds.append(has_pred)
+            # break
 
         feats = np.asarray(feats, np.float32)
         ctrs = np.asarray(ctrs, np.float32)
